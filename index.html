@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GLA Feedback Coach</title>
+<link rel="stylesheet" href="styles.css">
+<script src="config.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="logo">GLA</div>
+    <div>
+      <h1>Feedback Coach</h1>
+      <p>Foundations of Generative AI · Module Activities</p>
+    </div>
+  </header>
+
+  <!-- Step 1: code -->
+  <section class="card" id="loginCard">
+    <h2>Welcome! Let's check your work.</h2>
+    <p>The Feedback Coach reads your Module Activities and shows you what to revise to reach <strong>8 out of 10</strong>. Check as many times as you need. This is practice, not your grade. Your instructor confirms your final score in OpenLearning.</p>
+    <label for="code">Your learner code</label>
+    <input id="code" type="text" placeholder="Example: FG26A-K7M2QX" autocomplete="off" autocapitalize="characters">
+    <div class="row" style="margin-top:12px">
+      <button id="loginBtn">Start</button>
+      <span class="small">Your instructor gave you this code.</span>
+    </div>
+    <div id="loginErr" class="error hidden"></div>
+  </section>
+
+  <!-- Step 2-3: choose and upload -->
+  <section class="card hidden" id="checkCard">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">Hello, <span id="whoCode" class="mono"></span></h2>
+      <button class="secondary" id="logoutBtn" style="padding:8px 12px">Change code</button>
+    </div>
+    <p class="small" id="whoCohort"></p>
+
+    <label>1. Which module?</label>
+    <div class="chips" id="moduleChips"></div>
+
+    <label>2. Which path are you on?</label>
+    <div class="chips" id="pathChips">
+      <button type="button" class="chip teacher" data-path="teacher" aria-pressed="false">Teacher 🟠</button>
+      <button type="button" class="chip trainer" data-path="trainer" aria-pressed="false">Trainer 🟢</button>
+      <button type="button" class="chip teammate" data-path="teammate" aria-pressed="false">Teammate 🔵</button>
+    </div>
+
+    <label>3. Add your completed activity</label>
+    <div class="note">Before you upload: replace any real names, ID numbers, or health details of other people with labels like "Student A" or "Customer 1". This protects the people you serve (RA 10173).</div>
+    <div class="drop" id="drop" style="margin-top:12px">
+      <p style="margin:0 0 10px"><strong>Upload your PDF</strong></p>
+      <input type="file" id="pdf" accept="application/pdf,.pdf">
+      <p class="small" style="margin:10px 0 0">Tip: in Google Docs choose File, Download, PDF. In Word choose File, Save As, PDF.</p>
+    </div>
+    <p class="small" style="margin:12px 0 4px"><a href="#" id="togglePaste">No PDF? Paste your work instead</a></p>
+    <textarea id="paste" class="hidden" placeholder="Paste everything from your activity document here, including your own answers and the AI responses."></textarea>
+
+    <div class="row" style="margin-top:16px">
+      <button id="checkBtn">Check my work</button>
+      <span id="busy" class="small hidden"><span class="spinner"></span> Reading your work carefully. This takes about a minute.</span>
+    </div>
+    <div id="checkErr" class="error hidden"></div>
+  </section>
+
+  <!-- Results -->
+  <section class="card hidden" id="resultCard" aria-live="polite"></section>
+
+  <!-- History -->
+  <section class="card hidden" id="historyCard">
+    <h2>My progress</h2>
+    <div id="history"></div>
+  </section>
+
+  <p class="small" style="text-align:center">Global Learning Access · Human Inquiry first, AI second, you decide.</p>
+</div>
+
+<script>
+const API = window.GLA_WORKER_URL;
+const $ = (id) => document.getElementById(id);
+let state = { code: null, module: null, path: null, text: "" };
+const MODULE_NAMES = {
+  1: "Introduction to AI", 2: "How AI Works", 3: "Writing", 4: "Data", 5: "Ideas", 6: "Ethics"
+};
+const PATH_LABEL = { teacher: "Teacher 🟠", trainer: "Trainer 🟢", teammate: "Teammate 🔵" };
+
+function store(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) {} }
+function load(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function show(el, on) { el.classList.toggle("hidden", !on); }
+function esc(s) { const d = document.createElement("div"); d.textContent = s == null ? "" : String(s); return d.innerHTML; }
+
+async function api(path, body) {
+  const res = await fetch(API + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({ error: "Unexpected response." }));
+  if (!res.ok) throw new Error(data.error || "Something went wrong.");
+  return data;
+}
+
+// module chips
+for (let m = 1; m <= 6; m++) {
+  const b = document.createElement("button");
+  b.type = "button"; b.className = "chip"; b.dataset.module = m; b.setAttribute("aria-pressed", "false");
+  b.textContent = `Module ${m}: ${MODULE_NAMES[m]}`;
+  $("moduleChips").appendChild(b);
+}
+$("moduleChips").addEventListener("click", (e) => {
+  const b = e.target.closest(".chip"); if (!b) return;
+  state.module = +b.dataset.module; store("gla_module", state.module);
+  [...$("moduleChips").children].forEach((c) => c.setAttribute("aria-pressed", c === b));
+});
+$("pathChips").addEventListener("click", (e) => {
+  const b = e.target.closest(".chip"); if (!b) return;
+  state.path = b.dataset.path; store("gla_path", state.path);
+  [...$("pathChips").children].forEach((c) => c.setAttribute("aria-pressed", c === b));
+});
+function restoreChoices() {
+  const m = load("gla_module"), p = load("gla_path");
+  if (m) $("moduleChips").querySelector(`[data-module="${m}"]`)?.click();
+  if (p) $("pathChips").querySelector(`[data-path="${p}"]`)?.click();
+}
+
+// login
+async function login(code) {
+  show($("loginErr"), false);
+  $("loginBtn").disabled = true;
+  try {
+    const d = await api("/api/login", { code });
+    state.code = d.code; store("gla_code", d.code);
+    $("whoCode").textContent = d.code;
+    $("whoCohort").textContent = d.cohort_name;
+    show($("loginCard"), false); show($("checkCard"), true);
+    restoreChoices();
+    loadHistory();
+  } catch (e) {
+    $("loginErr").textContent = e.message; show($("loginErr"), true);
+    store("gla_code", null);
+  } finally { $("loginBtn").disabled = false; }
+}
+$("loginBtn").onclick = () => login($("code").value);
+$("code").addEventListener("keydown", (e) => { if (e.key === "Enter") login($("code").value); });
+$("logoutBtn").onclick = () => {
+  store("gla_code", null); state.code = null;
+  show($("checkCard"), false); show($("resultCard"), false); show($("historyCard"), false); show($("loginCard"), true);
+};
+
+// PDF reading (text stays in the browser until you press Check)
+if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+async function pdfToText(file) {
+  const buf = await file.arrayBuffer();
+  const doc = await pdfjsLib.getDocument({ data: buf }).promise;
+  let out = [];
+  for (let i = 1; i <= doc.numPages; i++) {
+    const page = await doc.getPage(i);
+    const tc = await page.getTextContent();
+    let lastY = null, line = "";
+    for (const it of tc.items) {
+      const y = Math.round(it.transform[5]);
+      if (lastY !== null && Math.abs(y - lastY) > 2) { out.push(line); line = ""; }
+      line += (line && !line.endsWith(" ") && !it.str.startsWith(" ") ? " " : "") + it.str;
+      lastY = y;
+      if (it.hasEOL) { out.push(line); line = ""; lastY = null; }
+    }
+    if (line) out.push(line);
+    out.push(`\n--- end of page ${i} ---\n`);
+  }
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+$("pdf").addEventListener("change", async () => {
+  const f = $("pdf").files[0]; if (!f) return;
+  show($("checkErr"), false);
+  $("drop").classList.remove("has");
+  try {
+    state.text = await pdfToText(f);
+    if (state.text.replace(/--- end of page \d+ ---/g, "").trim().length < 200) {
+      state.text = "";
+      throw new Error("We could not read text in this PDF. It may be a photo or scan. Please download your activity from Google Docs or Word as a PDF, or paste your work instead.");
+    }
+    $("drop").classList.add("has");
+    $("drop").querySelector("p").innerHTML = `<strong>✓ ${esc(f.name)} is ready</strong>`;
+  } catch (e) {
+    $("checkErr").textContent = e.message; show($("checkErr"), true);
+  }
+});
+$("togglePaste").onclick = (e) => { e.preventDefault(); show($("paste"), $("paste").classList.contains("hidden")); };
+
+// check
+$("checkBtn").onclick = async () => {
+  show($("checkErr"), false);
+  const pasted = $("paste").value.trim();
+  const text = pasted || state.text;
+  let msg = "";
+  if (!state.module) msg = "Please choose your module.";
+  else if (!state.path) msg = "Please choose your path.";
+  else if (!text) msg = "Please upload your PDF or paste your work.";
+  if (msg) { $("checkErr").textContent = msg; show($("checkErr"), true); return; }
+  $("checkBtn").disabled = true; show($("busy"), true);
+  try {
+    const r = await api("/api/check", { code: state.code, module: state.module, path: state.path, text });
+    renderResult(r, state.module, state.path);
+    loadHistory();
+  } catch (e) {
+    $("checkErr").textContent = e.message; show($("checkErr"), true);
+  } finally { $("checkBtn").disabled = false; show($("busy"), false); }
+};
+
+function renderResult(r, module, path) {
+  const card = $("resultCard");
+  let badge, banner = "";
+  if (r.status === "needs_review") {
+    badge = `<span class="badge review">Please read first</span>`;
+  } else if (r.passed) {
+    badge = `<span class="badge ok">Ready to submit</span>`;
+    banner = `<div class="callout ok"><strong>You did it!</strong> Your work meets the 8 out of 10 goal. Submit it in OpenLearning. Your instructor will confirm your final score.</div>`;
+  } else {
+    badge = `<span class="badge rev">Keep going</span>`;
+    banner = `<div class="callout warn">You are on your way. Make the changes below, then check again. Look how far you've come!</div>`;
+  }
+  const review = r.review_message ? `<div class="callout bad">${esc(r.review_message)}</div>` : "";
+  const crit = (r.criteria || []).map((c) => {
+    const pct = Math.round((c.score / c.max) * 100);
+    const cls = c.score === c.max ? "full" : c.score === 0 ? "zero" : "";
+    return `<div class="crit"><div class="crit-head"><span>${c.number}. ${esc(c.name)}</span><span class="nowrap">${c.score} / ${c.max}</span></div>
+      <div class="bar ${cls}"><span style="width:${pct}%"></span></div><div class="small">${esc(c.reason)}</div></div>`;
+  }).join("");
+  const steps = (r.revision_steps || []).length
+    ? `<h3>Your next steps</h3><ol class="steps">${r.revision_steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>` : "";
+  card.innerHTML = `
+    <div class="score-hero">
+      <div class="score-num">${r.criteria && r.criteria.length ? r.total : "–"}<span class="small"> / 10</span></div>
+      <div>${badge}<div class="small">Module ${module} · ${PATH_LABEL[path]}${r.attempt_no ? ` · Check #${r.attempt_no}` : ""}</div></div>
+    </div>
+    ${review}${banner}
+    ${r.strength ? `<h3>What you did well</h3><p>${esc(r.strength)}</p>` : ""}
+    ${steps}
+    ${r.stretch_goal ? `<h3>Optional stretch goal</h3><p>${esc(r.stretch_goal)}</p>` : ""}
+    ${crit ? `<h3>Your scores</h3>${crit}` : ""}
+    ${r.encouragement ? `<p><em>${esc(r.encouragement)}</em></p>` : ""}
+    <p class="small">These scores are a practice check from an AI coach. Your instructor confirms your final score.</p>`;
+  show(card, true);
+  card.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function loadHistory() {
+  try {
+    const d = await api("/api/history", { code: state.code });
+    const list = d.attempts || [];
+    if (!list.length) { show($("historyCard"), false); return; }
+    const byMod = {};
+    list.forEach((a) => (byMod[a.module] = byMod[a.module] || []).push(a));
+    $("history").innerHTML = Object.keys(byMod).sort().map((m) => {
+      const rows = byMod[m].map((a, i) => {
+        const st = a.status === "complete" ? "✅ Ready" : a.status === "needs_review" ? "Please read" : "Keep going";
+        return `<tr><td>#${i + 1}</td><td>${new Date(a.created_at).toLocaleString()}</td><td>${PATH_LABEL[a.path] || ""}</td><td>${a.criteria.length ? a.total + " / 10" : "–"}</td><td>${st}</td>
+          <td><a href="#" data-id="${a.id}">View</a></td></tr>`;
+      }).join("");
+      return `<h3>Module ${m}: ${MODULE_NAMES[m]}</h3><div class="tablewrap"><table><thead><tr><th>Check</th><th>When</th><th>Path</th><th>Score</th><th>Result</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    }).join("");
+    $("history").onclick = (e) => {
+      const a = e.target.closest("a[data-id]"); if (!a) return;
+      e.preventDefault();
+      const at = list.find((x) => String(x.id) === a.dataset.id);
+      const n = byMod[at.module].indexOf(at) + 1;
+      renderResult({ ...at, attempt_no: n }, at.module, at.path);
+    };
+    show($("historyCard"), true);
+  } catch (e) { /* history is optional */ }
+}
+
+const saved = load("gla_code");
+if (saved) { $("code").value = saved; login(saved); }
+</script>
+</body>
+</html>

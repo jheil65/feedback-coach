@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Feedback Coach: Teacher View</title>
+<link rel="stylesheet" href="styles.css">
+<script src="config.js"></script>
+<style>
+  .wrap { max-width: 1000px; }
+  .grid td.cell { text-align: center; white-space: nowrap; }
+  .pill { display: inline-block; min-width: 54px; padding: 3px 8px; border-radius: 8px; font-weight: 700; font-size: .85rem; }
+  .pill.ok { background: var(--ok-bg); color: var(--ok); }
+  .pill.rev { background: var(--warn-bg); color: var(--warn); }
+  .pill.review { background: var(--bad-bg); color: var(--bad); }
+  .codes { columns: 3 160px; font-family: ui-monospace, Menlo, monospace; font-size: .95rem; }
+  details { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 8px 0; background: #fff; }
+  summary { cursor: pointer; font-weight: 600; }
+  .flag { color: var(--bad); font-size: .9rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="logo">GLA</div>
+    <div><h1>Feedback Coach: Teacher View</h1><p>Cohorts, learner codes, and revision history</p></div>
+  </header>
+
+  <section class="card" id="authCard">
+    <h2>Sign in</h2>
+    <label for="pw">Teacher password</label>
+    <input id="pw" type="password" autocomplete="current-password">
+    <div class="row" style="margin-top:12px"><button id="pwBtn">Open</button></div>
+    <div id="pwErr" class="error hidden"></div>
+  </section>
+
+  <div id="app" class="hidden">
+    <section class="card">
+      <div class="row" style="justify-content:space-between"><h2 style="margin:0">Cohorts</h2>
+        <button class="secondary" id="signOut" style="padding:8px 12px">Sign out</button></div>
+      <div id="cohortList" style="margin-top:10px"></div>
+    </section>
+
+    <section class="card">
+      <h2>New cohort</h2>
+      <div class="row">
+        <div style="flex:1 1 140px"><label for="cId">Cohort ID (short)</label><input id="cId" type="text" placeholder="FG26A"></div>
+        <div style="flex:3 1 260px"><label for="cName">Cohort name</label><input id="cName" type="text" placeholder="Foundations, Nov 2026, PTTC Manila"></div>
+      </div>
+      <div class="row">
+        <div style="flex:1 1 140px"><label for="cCount">Number of learner codes</label><input id="cCount" type="number" min="1" max="200" value="25"></div>
+        <div style="flex:1 1 140px"><label for="cLimit">Checks per learner per day</label><input id="cLimit" type="number" min="1" max="50" value="10"></div>
+      </div>
+      <div class="row" style="margin-top:12px"><button id="createBtn">Create cohort and codes</button></div>
+      <div id="createOut"></div>
+    </section>
+
+    <section class="card hidden" id="cohortCard"></section>
+    <section class="card hidden" id="learnerCard"></section>
+  </div>
+</div>
+
+<script>
+const API = window.GLA_WORKER_URL;
+const $ = (id) => document.getElementById(id);
+const show = (el, on) => el.classList.toggle("hidden", !on);
+const esc = (s) => { const d = document.createElement("div"); d.textContent = s == null ? "" : String(s); return d.innerHTML; };
+const PATH_LABEL = { teacher: "Teacher 🟠", trainer: "Trainer 🟢", teammate: "Teammate 🔵" };
+let KEY = "";
+try { KEY = sessionStorage.getItem("gla_t") || ""; } catch (e) {}
+
+async function tapi(path, opts = {}) {
+  const res = await fetch(API + path, {
+    method: opts.method || "GET",
+    headers: { "Content-Type": "application/json", "X-Teacher-Key": KEY },
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  const data = await res.json().catch(() => ({ error: "Unexpected response." }));
+  if (!res.ok) throw new Error(data.error || "Request failed.");
+  return data;
+}
+
+async function signIn() {
+  KEY = $("pw").value || KEY;
+  show($("pwErr"), false);
+  try {
+    await tapi("/api/teacher/login", { method: "POST", body: {} });
+    try { sessionStorage.setItem("gla_t", KEY); } catch (e) {}
+    show($("authCard"), false); show($("app"), true);
+    loadCohorts();
+  } catch (e) {
+    $("pwErr").textContent = e.message; show($("pwErr"), true);
+    try { sessionStorage.removeItem("gla_t"); } catch (e) {}
+  }
+}
+$("pwBtn").onclick = signIn;
+$("pw").addEventListener("keydown", (e) => { if (e.key === "Enter") signIn(); });
+$("signOut").onclick = () => { try { sessionStorage.removeItem("gla_t"); } catch (e) {} location.reload(); };
+
+async function loadCohorts() {
+  const d = await tapi("/api/teacher/cohorts");
+  if (!d.cohorts.length) { $("cohortList").innerHTML = `<p class="small">No cohorts yet. Create one below.</p>`; return; }
+  $("cohortList").innerHTML = `<table><thead><tr><th>ID</th><th>Name</th><th>Learners</th><th>Checks</th><th>Created</th><th></th></tr></thead><tbody>${
+    d.cohorts.map((c) => `<tr><td class="mono">${esc(c.id)}</td><td>${esc(c.name)}</td><td>${c.learners}</td><td>${c.attempts}</td>
+      <td>${new Date(c.created_at).toLocaleDateString()}</td><td><a href="#" data-c="${esc(c.id)}">Open</a></td></tr>`).join("")
+  }</tbody></table>`;
+  $("cohortList").onclick = (e) => { const a = e.target.closest("a[data-c]"); if (a) { e.preventDefault(); openCohort(a.dataset.c); } };
+}
+
+function codesBlock(codes, title) {
+  const csv = "learner_code\n" + codes.join("\n");
+  const href = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
+  return `<h3>${esc(title)}</h3><div class="codes">${codes.map((c) => `<div>${esc(c)}</div>`).join("")}</div>
+    <p class="small"><a download="learner-codes.csv" href="${href}">Download these codes (CSV)</a>. Keep your own list of which code belongs to which learner. The Feedback Coach never stores names.</p>`;
+}
+
+$("createBtn").onclick = async () => {
+  $("createBtn").disabled = true;
+  try {
+    const d = await tapi("/api/teacher/cohorts", { method: "POST", body: {
+      id: $("cId").value, name: $("cName").value, count: $("cCount").value, daily_limit: $("cLimit").value } });
+    $("createOut").innerHTML = codesBlock(d.codes, `Codes for ${d.id}`);
+    loadCohorts();
+  } catch (e) { $("createOut").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+  finally { $("createBtn").disabled = false; }
+};
+
+function pill(s) {
+  if (!s) return `<span class="small">–</span>`;
+  const cls = s.completes > 0 ? "ok" : s.reviews > 0 ? "review" : "rev";
+  return `<span class="pill ${cls}" title="${s.attempts} checks">${s.best ?? "–"}/10</span><div class="small">${s.attempts}×</div>`;
+}
+
+async function openCohort(id) {
+  const d = await tapi("/api/teacher/cohort?id=" + encodeURIComponent(id));
+  const map = {};
+  d.stats.forEach((s) => (map[s.code + ":" + s.module] = s));
+  const card = $("cohortCard");
+  card.innerHTML = `
+    <div class="row" style="justify-content:space-between"><h2 style="margin:0">${esc(d.cohort.name)} <span class="small mono">${esc(d.cohort.id)}</span></h2></div>
+    <p class="small">Best score per module and number of checks. Green = reached 8/10 · Amber = still revising · Red = needs your review.</p>
+    <div style="overflow-x:auto"><table class="grid"><thead><tr><th>Learner code</th>${[1,2,3,4,5,6].map((m) => `<th class="cell">M${m}</th>`).join("")}<th></th></tr></thead><tbody>${
+      d.learners.map((l) => `<tr><td class="mono">${esc(l.code)}</td>${[1,2,3,4,5,6].map((m) => `<td class="cell">${pill(map[l.code + ":" + m])}</td>`).join("")}
+        <td><a href="#" data-l="${esc(l.code)}">History</a></td></tr>`).join("")
+    }</tbody></table></div>
+    <h3>Add more codes</h3>
+    <div class="row"><input id="moreN" type="number" min="1" max="200" value="5" style="width:110px"><button class="secondary" id="moreBtn">Add codes</button></div>
+    <div id="moreOut"></div>
+    <h3 style="margin-top:24px">Delete this cohort</h3>
+    <p class="small">This permanently deletes every learner code and all saved revision history for this cohort. Type the cohort ID to confirm.</p>
+    <div class="row"><input id="delConfirm" type="text" placeholder="${esc(d.cohort.id)}" style="width:160px"><button class="danger" id="delBtn">Delete cohort</button></div>
+    <div id="delOut"></div>`;
+  show(card, true); show($("learnerCard"), false);
+  card.querySelector("table").onclick = (e) => { const a = e.target.closest("a[data-l]"); if (a) { e.preventDefault(); openLearner(a.dataset.l); } };
+  $("moreBtn").onclick = async () => {
+    try { const r = await tapi("/api/teacher/codes", { method: "POST", body: { cohort_id: d.cohort.id, count: $("moreN").value } });
+      $("moreOut").innerHTML = codesBlock(r.codes, "New codes"); openCohortSoon(id); }
+    catch (e) { $("moreOut").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+  };
+  $("delBtn").onclick = async () => {
+    if ($("delConfirm").value.trim().toUpperCase() !== d.cohort.id) {
+      $("delOut").innerHTML = `<div class="error">Type ${esc(d.cohort.id)} exactly to confirm.</div>`; return;
+    }
+    await tapi("/api/teacher/cohort?id=" + encodeURIComponent(d.cohort.id), { method: "DELETE" });
+    show(card, false); show($("learnerCard"), false); loadCohorts();
+  };
+  card.scrollIntoView({ behavior: "smooth" });
+}
+function openCohortSoon(id) { setTimeout(() => loadCohorts(), 50); }
+
+async function openLearner(code) {
+  const d = await tapi("/api/teacher/learner?code=" + encodeURIComponent(code));
+  const card = $("learnerCard");
+  const items = d.attempts.map((a, i) => {
+    const r = a.result;
+    const st = a.status === "complete" ? `<span class="pill ok">Ready</span>` : a.status === "needs_review" ? `<span class="pill review">Review</span>` : `<span class="pill rev">Revise</span>`;
+    const flags = [
+      r.review_type && r.review_type !== "none" ? `Review: ${r.review_type.replace("_", " ")}. ${r.review_note_for_teacher || ""}` : "",
+      ...(r.teacher_flags || []),
+    ].filter(Boolean).map((f) => `<div class="flag">⚑ ${esc(f)}</div>`).join("");
+    return `<details><summary>Module ${a.module} · ${PATH_LABEL[a.path] || a.path} · ${new Date(a.created_at).toLocaleString()} · ${a.total}/10 ${st}</summary>
+      ${flags}
+      <table><tbody>${r.criteria.map((c) => `<tr><td>${c.number}. ${esc(c.name)}</td><td>${c.score}/${c.max}</td><td class="small">${esc(c.reason)}</td></tr>`).join("")}</tbody></table>
+      <p><strong>Strength:</strong> ${esc(r.strength)}</p>
+      ${r.revision_steps.length ? `<p><strong>Revision steps:</strong></p><ol class="steps">${r.revision_steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>` : ""}
+      ${r.stretch_goal ? `<p><strong>Stretch goal:</strong> ${esc(r.stretch_goal)}</p>` : ""}
+      ${a.submission_text ? `<details><summary>Submitted text</summary><pre class="sub">${esc(a.submission_text)}</pre></details>` : `<p class="small">Submitted text not saved (personal or confidential data was detected).</p>`}
+    </details>`;
+  }).join("");
+  card.innerHTML = `<h2>History for <span class="mono">${esc(code)}</span></h2>${items || `<p class="small">No checks yet.</p>`}`;
+  show(card, true);
+  card.scrollIntoView({ behavior: "smooth" });
+}
+
+if (KEY) signIn();
+</script>
+</body>
+</html>
