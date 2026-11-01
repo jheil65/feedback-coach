@@ -182,9 +182,12 @@ async function openLearner(code) {
     return `<details><summary>Module ${a.module} · ${PATH_LABEL[a.path] || a.path} · ${new Date(a.created_at).toLocaleString()} · ${a.total}/10 ${st}</summary>
       ${flags}
       <table><tbody>${r.criteria.map((c) => `<tr><td>${c.number}. ${esc(c.name)}</td><td>${c.score}/${c.max}</td><td class="small">${esc(c.reason)}</td></tr>`).join("")}</tbody></table>
-      <p><strong>Strength:</strong> ${esc(r.strength)}</p>
-      ${r.revision_steps.length ? `<p><strong>Revision steps:</strong></p><ol class="steps">${r.revision_steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>` : ""}
-      ${r.stretch_goal ? `<p><strong>Stretch goal:</strong> ${esc(r.stretch_goal)}</p>` : ""}
+      ${(r.blank_required_areas || []).length ? `<p class="flag">Blank required areas: ${r.blank_required_areas.map(esc).join(", ")}</p>` : ""}
+      ${r.overall_feedback ? `<p><strong>Overall Feedback:</strong> ${esc(r.overall_feedback)}</p>` : ""}
+      ${(r.strengths || (r.strength ? [r.strength] : [])).map((s) => `<p><strong>Strength:</strong> ${esc(s)}</p>`).join("")}
+      ${(r.areas_for_growth || []).map((s) => `<p><strong>Area for Growth:</strong> ${esc(s)}</p>`).join("")}
+      ${(r.revision_steps || []).length ? `<p><strong>Revisions needed to reach 8/10:</strong></p><ol class="steps">${r.revision_steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>` : ""}
+      ${(r.optional_next_step || r.stretch_goal) ? `<p><strong>Optional Next Step:</strong> ${esc(r.optional_next_step || r.stretch_goal)}</p>` : ""}
       ${a.submission_text ? `<details><summary>Submitted text</summary><pre class="sub">${esc(a.submission_text)}</pre></details>` : `<p class="small">Submitted text not saved (personal or confidential data was detected).</p>`}
     </details>`;
   }).join("");

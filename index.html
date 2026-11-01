@@ -216,8 +216,10 @@ function renderResult(r, module, path) {
     banner = `<div class="callout ok"><strong>You did it!</strong> Your work meets the 8 out of 10 goal. Submit it in OpenLearning. Your instructor will confirm your final score.</div>`;
   } else {
     badge = `<span class="badge rev">Keep going</span>`;
-    banner = `<div class="callout warn">You are on your way. Make the changes below, then check again. Look how far you've come!</div>`;
+    banner = `<div class="callout warn">You are on your way. Make the changes below and check again before you begin the next module. Look how far you've come!</div>`;
   }
+  const blanks = r.blank_required_areas || [];
+  if (blanks.length > 1) banner += `<div class="callout bad"><strong>Complete these unanswered areas to pass:</strong> ${blanks.map(esc).join(", ")}</div>`;
   const review = r.review_message ? `<div class="callout bad">${esc(r.review_message)}</div>` : "";
   const crit = (r.criteria || []).map((c) => {
     const pct = Math.round((c.score / c.max) * 100);
@@ -225,17 +227,22 @@ function renderResult(r, module, path) {
     return `<div class="crit"><div class="crit-head"><span>${c.number}. ${esc(c.name)}</span><span class="nowrap">${c.score} / ${c.max}</span></div>
       <div class="bar ${cls}"><span style="width:${pct}%"></span></div><div class="small">${esc(c.reason)}</div></div>`;
   }).join("");
+  const list = (a) => (a || []).map((s) => `<p>${esc(s)}</p>`).join("");
+  const strengths = r.strengths || (r.strength ? [r.strength] : []);
   const steps = (r.revision_steps || []).length
-    ? `<h3>Your next steps</h3><ol class="steps">${r.revision_steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>` : "";
+    ? `<h3>Revisions needed to reach 8/10</h3><ol class="steps">${r.revision_steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>` : "";
+  const nextStep = r.optional_next_step || r.stretch_goal || "";
   card.innerHTML = `
     <div class="score-hero">
       <div class="score-num">${r.criteria && r.criteria.length ? r.total : "–"}<span class="small"> / 10</span></div>
       <div>${badge}<div class="small">Module ${module} · ${PATH_LABEL[path]}${r.attempt_no ? ` · Check #${r.attempt_no}` : ""}</div></div>
     </div>
     ${review}${banner}
-    ${r.strength ? `<h3>What you did well</h3><p>${esc(r.strength)}</p>` : ""}
+    ${r.overall_feedback ? `<h3>Overall Feedback</h3><p>${esc(r.overall_feedback)}</p>` : ""}
+    ${strengths.length ? `<h3>Strengths</h3>${list(strengths)}` : ""}
+    ${(r.areas_for_growth || []).length ? `<h3>Areas for Growth</h3>${list(r.areas_for_growth)}` : ""}
     ${steps}
-    ${r.stretch_goal ? `<h3>Optional stretch goal</h3><p>${esc(r.stretch_goal)}</p>` : ""}
+    ${nextStep ? `<h3>Optional Next Step</h3><p>${esc(nextStep)}</p>` : ""}
     ${crit ? `<h3>Your scores</h3>${crit}` : ""}
     ${r.encouragement ? `<p><em>${esc(r.encouragement)}</em></p>` : ""}
     <p class="small">These scores are a practice check from an AI coach. Your instructor confirms your final score.</p>`;
